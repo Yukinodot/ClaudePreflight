@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude 本地环境检查</title>
+<style>
+:root{--paper:#F9F8F6;--ink:#141413;--muted:#615C55;--rule:#D8D3C9;--accent:#384F3A}
+*{box-sizing:border-box}body{margin:0;padding:42px;background:var(--paper);color:var(--ink);font:16px/1.8 "Microsoft YaHei UI",sans-serif;max-width:65ch}h1{font:32px/1.4 SimSun,serif;margin:0 0 20px}p{margin:0 0 18px}#state{padding:18px 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);color:var(--accent)}small{color:var(--muted)}button{background:var(--ink);color:var(--paper);border:1px solid var(--ink);font:inherit;padding:8px 20px;cursor:pointer}button:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+</style>
+<h1>程序内置环境测量</h1>
+<p id="state" role="status">正在读取时区、平台和渲染信息…</p>
+<p><small>本页在程序内部的 WebView2 中运行，结果通过本机消息接口返回。</small></p>
+<script>
+'use strict';
+const state=document.getElementById('state');
+async function httpProbe(){
+  try{
+    const response=await fetch('https://www.cloudflare.com/cdn-cgi/trace',{credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(8000)});
+    if(!response.ok) return {HttpError:'HTTP '+response.status};
+    const text=await response.text();const line=text.split('\n').find(x=>x.startsWith('ip='));
+    return line?{HttpIp:line.slice(3).trim()}:{HttpError:'响应未含 IP'};
+  }catch(e){return {HttpError:e.name};}
+}
+async function rtcProbe(){
+  const value={WebRtcIps:[],HostCandidates:0,ServerCandidates:0,RelayCandidates:0,WebRtcState:'未创建'};
+  if(!window.RTCPeerConnection){value.WebRtcState='API 未提供';return value;}
+  let peer;
+  try{
+    peer=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    const finished=new Promise(resolve=>{
+      peer.onicecandidate=event=>{
+        if(!event.candidate){resolve();return;}
+        const c=event.candidate;
+        if(c.type==='host')value.HostCandidates++;
+        if(c.type==='srflx'){value.ServerCandidates++;if(c.address&&!value.WebRtcIps.includes(c.address))value.WebRtcIps.push(c.address);}
+        if(c.type==='relay')value.RelayCandidates++;
+      };
+    });
+    peer.createDataChannel('local-probe');
+    await peer.setLocalDescription(await peer.createOffer());
+    await Promise.race([finished,new Promise(resolve=>setTimeout(resolve,5500))]);
+    value.WebRtcState=peer.iceGatheringState;
+  }catch(e){value.WebRtcState=e.name;}finally{if(peer)peer.close();}
+  return value;
+}
+async function drawProbe(){
+  const result={WebGL:'未提供',CanvasHash:''};
+  try{
+    const gl=document.createElement('canvas').getContext('webgl');
+    if(gl){const ext=gl.getExtension('WEBGL_debug_renderer_info');result.WebGL=String(gl.getParameter(ext?ext.UNMASKED_RENDERER_WEBGL:gl.RENDERER));}
+  }catch(e){result.WebGL=e.name;}
+  try{
+    const canvas=document.createElement('canvas');canvas.width=260;canvas.height=85;
+    const ctx=canvas.getContext('2d');ctx.fillStyle='#F9F8F6';ctx.fillRect(0,0,260,85);ctx.fillStyle='#141413';ctx.font='19px serif';ctx.fillText('Local rendering sample 2026',11,30);ctx.strokeStyle='#384F3A';ctx.beginPath();ctx.arc(183,56,16,.3,5.4);ctx.stroke();
+    const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canvas.toDataURL()));
+    result.CanvasHash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');
+  }catch(e){result.CanvasHash='';}
+  return result;
+}
+(async()=>{
+  try{
+    const details={UserAgent:navigator.userAgent,Platform:navigator.platform,ClientPlatform:navigator.userAgentData?navigator.userAgentData.platform:'',TimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,OffsetMinutes:-new Date().getTimezoneOffset(),Webdriver:navigator.webdriver===true,Screen:`${screen.width}×${screen.height} / DPR ${devicePixelRatio} / ${screen.colorDepth} bit`,CpuThreads:navigator.hardwareConcurrency||0};
+    state.textContent='正在测量 HTTP 出口与 WebRTC 候选…';
+    const values=await Promise.all([httpProbe(),rtcProbe(),drawProbe()]);Object.assign(details,...values);
+    window.chrome.webview.postMessage(details);
+    state.textContent='检查完成。';
+  }catch(e){state.textContent='检查未完成：'+e.message+'。可关闭后重新检查。';}
+})();
+</script></html>

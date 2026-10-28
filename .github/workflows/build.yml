@@ -1,0 +1,27 @@
+name: Build and self-test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release package
+        shell: powershell
+        run: .\scripts\package.ps1
+      - name: Run offline self-test
+        shell: powershell
+        run: |
+          $process = Start-Process -FilePath .\ClaudePreflight.exe -ArgumentList @('--self-test', "$PWD\artifacts\self-test.json") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Self-test failed' }
+          $result = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
+          if ($result.failed -ne 0 -or $result.passed -ne 31) { throw 'Unexpected test results' }
+          Get-Content .\artifacts\self-test.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClaudePreflight-Windows
+          path: |
+            artifacts/ClaudePreflight-Windows.zip
+            artifacts/SHA256SUMS.txt
+            artifacts/self-test.json

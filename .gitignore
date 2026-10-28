@@ -1,0 +1,10 @@
+data/
+artifacts/
+test-state-*/
+capture-data/
+ClaudePreflight.exe
+*.pdb
+*.error.txt
+.vs/
+bin/
+obj/
